@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -57,8 +58,9 @@ class NexusParser:
 
     def parse(self, file_path: Path) -> ParsedDocument:
         suffix = file_path.suffix.lower()
+        metadata = self._file_metadata(file_path)
         if suffix in CODE_SUFFIX_TO_LANGUAGE:
-            return self._parse_code(file_path, CODE_SUFFIX_TO_LANGUAGE[suffix])
+            return self._parse_code(file_path, CODE_SUFFIX_TO_LANGUAGE[suffix], metadata)
 
         if suffix in TEXT_SUFFIXES:
             text = file_path.read_text(encoding="utf-8", errors="ignore")
@@ -67,6 +69,8 @@ class NexusParser:
                 content=text,
                 file_type="document",
                 parser_name="plain",
+                sections=self._parse_markdown_sections(text),
+                metadata=metadata,
             )
 
         if self.converter is not None:
@@ -77,6 +81,8 @@ class NexusParser:
                 content=markdown,
                 file_type="document",
                 parser_name="docling",
+                sections=self._parse_markdown_sections(markdown),
+                metadata=metadata,
             )
 
         return ParsedDocument(
@@ -84,9 +90,15 @@ class NexusParser:
             content=file_path.read_text(encoding="utf-8", errors="ignore"),
             file_type="document",
             parser_name="fallback",
+            metadata=metadata,
         )
 
-    def _parse_code(self, file_path: Path, language: str) -> ParsedDocument:
+    def _parse_code(
+        self,
+        file_path: Path,
+        language: str,
+        metadata: dict[str, object],
+    ) -> ParsedDocument:
         source = file_path.read_text(encoding="utf-8", errors="ignore")
         if self._tree_sitter_available:
             sections = self._parse_code_with_tree_sitter(source, language)
@@ -98,6 +110,7 @@ class NexusParser:
                     language=language,
                     parser_name="tree-sitter",
                     sections=sections,
+                    metadata=metadata,
                 )
 
         return ParsedDocument(
@@ -107,7 +120,68 @@ class NexusParser:
             language=language,
             parser_name="regex-fallback",
             sections=self._parse_code_with_regex(source, language),
+            metadata=metadata,
         )
+
+    def _parse_markdown_sections(self, markdown: str) -> list[ParsedSection]:
+        lines = markdown.splitlines()
+        sections: list[ParsedSection] = []
+        headers: list[str] = []
+        paragraph_buffer: list[str] = []
+        idx = 0
+
+        def flush_paragraph() -> None:
+            text = "\n".join(paragraph_buffer).strip()
+            if not text:
+                paragraph_buffer.clear()
+                return
+            title = " / ".join(headers) if headers else "ROOT"
+            sections.append(ParsedSection(title=title, text=text, kind="section"))
+            paragraph_buffer.clear()
+
+        while idx < len(lines):
+            line = lines[idx]
+            heading_match = re.match(r"^(#{1,6})\s+(.*)$", line.strip())
+            if heading_match:
+                flush_paragraph()
+                level = len(heading_match.group(1))
+                title = heading_match.group(2).strip()
+                headers[:] = headers[: level - 1]
+                headers.append(title)
+                idx += 1
+                continue
+
+            if self._is_table_line(line):
+                flush_paragraph()
+                table_lines = [line]
+                idx += 1
+                while idx < len(lines) and self._is_table_line(lines[idx]):
+                    table_lines.append(lines[idx])
+                    idx += 1
+                title = " / ".join(headers) if headers else "ROOT"
+                table_text = self._compose_table_context(
+                    lines=lines,
+                    table_start=idx - len(table_lines),
+                    table_end=idx,
+                    table_lines=table_lines,
+                )
+                sections.append(
+                    ParsedSection(
+                        title=f"{title} / TABLE",
+                        text=table_text,
+                        kind="table",
+                        metadata={"contains_table": True},
+                    )
+                )
+                continue
+
+            paragraph_buffer.append(line)
+            idx += 1
+
+        flush_paragraph()
+        if not sections and markdown.strip():
+            sections.append(ParsedSection(title="ROOT", text=markdown.strip(), kind="section"))
+        return sections
 
     def _parse_code_with_tree_sitter(
         self,
@@ -223,3 +297,65 @@ class NexusParser:
                 re.MULTILINE,
             )
         return None
+
+    @staticmethod
+    def _is_table_line(line: str) -> bool:
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            return False
+        return stripped.count("|") >= 2
+
+    @staticmethod
+    def _compose_table_context(
+        lines: list[str],
+        table_start: int,
+        table_end: int,
+        table_lines: list[str],
+    ) -> str:
+        before = NexusParser._nearest_context_paragraph(lines, table_start - 1, -1)
+        after = NexusParser._nearest_context_paragraph(lines, table_end, 1)
+        parts = []
+        if before:
+            parts.append(f"Table context before:\n{before}")
+        parts.append("Table content:\n" + "\n".join(table_lines))
+        if after:
+            parts.append(f"Table context after:\n{after}")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _nearest_context_paragraph(lines: list[str], start: int, step: int) -> str:
+        collected: list[str] = []
+        idx = start
+        while 0 <= idx < len(lines):
+            candidate = lines[idx].strip()
+            if not candidate:
+                if collected:
+                    break
+                idx += step
+                continue
+            if candidate.startswith("#") or NexusParser._is_table_line(candidate):
+                if collected:
+                    break
+                idx += step
+                continue
+            if step < 0:
+                collected.insert(0, candidate)
+            else:
+                collected.append(candidate)
+            idx += step
+        return " ".join(collected).strip()
+
+    @staticmethod
+    def _file_metadata(file_path: Path) -> dict[str, object]:
+        stat = file_path.stat()
+        modified = datetime.fromtimestamp(stat.st_mtime)
+        created = datetime.fromtimestamp(stat.st_ctime)
+        return {
+            "source_name": file_path.name,
+            "source_suffix": file_path.suffix.lower(),
+            "source_stem": file_path.stem,
+            "file_size_bytes": stat.st_size,
+            "created_at": created.isoformat(timespec="seconds"),
+            "updated_at": modified.isoformat(timespec="seconds"),
+            "updated_year": modified.year,
+        }

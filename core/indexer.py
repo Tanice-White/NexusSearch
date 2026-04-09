@@ -52,6 +52,9 @@ class NexusIndexer:
         embeddings = self.embed_texts([chunk.text for chunk in chunks])
         records = []
         for chunk, embedding in zip(chunks, embeddings):
+            updated_year = chunk.metadata.get("updated_year")
+            updated_at = chunk.metadata.get("updated_at")
+            contains_table = bool(chunk.metadata.get("contains_table", False))
             records.append(
                 {
                     "id": chunk.id,
@@ -64,6 +67,9 @@ class NexusIndexer:
                     "file_type": chunk.file_type,
                     "language": chunk.language or "",
                     "chunk_kind": chunk.chunk_kind,
+                    "updated_year": int(updated_year) if updated_year is not None else -1,
+                    "updated_at": str(updated_at or ""),
+                    "contains_table": contains_table,
                     "metadata_json": json.dumps(chunk.metadata, ensure_ascii=False),
                     "vector": embedding,
                 }

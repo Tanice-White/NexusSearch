@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 
 import requests
 
@@ -25,6 +26,20 @@ class OllamaGenerator:
             "2) cite supporting snippets with [index]\n"
         )
         return self.chat(prompt)
+
+    def stream_answer(self, query: str, contexts: list[RetrievedChunk]) -> Iterator[str]:
+        context_block = self._build_context_block(contexts)
+        prompt = (
+            "You are an enterprise RAG assistant. "
+            "Answer only using the provided context. "
+            "If the answer is uncertain, explicitly say so.\n\n"
+            f"Question:\n{query}\n\n"
+            f"Context:\n{context_block}\n\n"
+            "Output requirement:\n"
+            "1) concise answer\n"
+            "2) cite supporting snippets with [index]\n"
+        )
+        return self.stream_chat(prompt)
 
     def grade_relevance(self, query: str, contexts: list[RetrievedChunk]) -> dict[str, object]:
         if not contexts:
@@ -86,6 +101,27 @@ class OllamaGenerator:
         response.raise_for_status()
         payload = response.json()
         return payload.get("message", {}).get("content", "").strip()
+
+    def stream_chat(self, prompt: str) -> Iterator[str]:
+        url = f"{self.config.ollama_base_url.rstrip('/')}/api/chat"
+        with requests.post(
+            url,
+            json={
+                "model": self.config.ollama_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "stream": True,
+            },
+            timeout=self.config.ollama_timeout_sec,
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines(decode_unicode=True):
+                if not line:
+                    continue
+                payload = json.loads(line)
+                content = payload.get("message", {}).get("content", "")
+                if content:
+                    yield content
 
     @staticmethod
     def _extract_json(raw: str) -> str:

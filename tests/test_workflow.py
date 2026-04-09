@@ -7,7 +7,14 @@ class StubRetriever:
     def __init__(self) -> None:
         self.queries: list[str] = []
 
-    def retrieve(self, query: str, top_k=None, candidate_k=None, use_rerank=None):  # noqa: ANN001
+    def retrieve(  # noqa: ANN001
+        self,
+        query: str,
+        top_k=None,
+        candidate_k=None,
+        use_rerank=None,
+        filters=None,
+    ):
         self.queries.append(query)
         text = "hybrid retrieval with dense and sparse fusion"
         if "rewrite" in query:

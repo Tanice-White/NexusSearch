@@ -5,7 +5,7 @@ from typing import TypedDict
 from core.config import NexusConfig
 from core.llm import OllamaGenerator
 from core.retriever import HybridRetriever
-from core.schemas import RAGAnswer, RetrievedChunk
+from core.schemas import RAGAnswer, RetrievedChunk, RetrievalFilters
 
 
 class SelfRAGState(TypedDict, total=False):
@@ -35,6 +35,7 @@ class SelfRAGWorkflow:
         top_k: int | None = None,
         candidate_k: int | None = None,
         use_rerank: bool | None = None,
+        filters: RetrievalFilters | None = None,
         generate: bool = True,
     ) -> RAGAnswer:
         if self.config.prefer_langgraph:
@@ -44,6 +45,7 @@ class SelfRAGWorkflow:
                     top_k=top_k,
                     candidate_k=candidate_k,
                     use_rerank=use_rerank,
+                    filters=filters,
                     generate=generate,
                 )
             except Exception:
@@ -53,6 +55,7 @@ class SelfRAGWorkflow:
             top_k=top_k,
             candidate_k=candidate_k,
             use_rerank=use_rerank,
+            filters=filters,
             generate=generate,
         )
 
@@ -62,6 +65,7 @@ class SelfRAGWorkflow:
         top_k: int | None,
         candidate_k: int | None,
         use_rerank: bool | None,
+        filters: RetrievalFilters | None,
         generate: bool,
     ) -> RAGAnswer:
         current_query = query
@@ -74,6 +78,7 @@ class SelfRAGWorkflow:
                 top_k=top_k,
                 candidate_k=candidate_k,
                 use_rerank=use_rerank,
+                filters=filters,
             )
             trace.append(
                 {
@@ -128,6 +133,7 @@ class SelfRAGWorkflow:
         top_k: int | None,
         candidate_k: int | None,
         use_rerank: bool | None,
+        filters: RetrievalFilters | None,
         generate: bool,
     ) -> RAGAnswer:
         from langgraph.graph import END, StateGraph
@@ -140,6 +146,7 @@ class SelfRAGWorkflow:
                 top_k=top_k,
                 candidate_k=candidate_k,
                 use_rerank=use_rerank,
+                filters=filters,
             )
             trace = list(state.get("trace", []))
             trace.append(

@@ -1,0 +1,1 @@
+{"query":"这个系统如何处理混合检索的分数融合？","ground_truth":"系统使用 Reciprocal Rank Fusion 统一 Dense 与 Sparse 的召回排序，避免不同分数量纲直接相加带来的问题。","workflow":"self-rag","top_k":6,"candidate_k":24,"rerank":true,"generate":true}

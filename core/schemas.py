@@ -50,6 +50,15 @@ class RetrievedChunk:
 
 
 @dataclass(slots=True)
+class RetrievalFilters:
+    year_from: int | None = None
+    year_to: int | None = None
+    file_type: str | None = None
+    language: str | None = None
+    source_contains: str | None = None
+
+
+@dataclass(slots=True)
 class RAGAnswer:
     query: str
     answer: str

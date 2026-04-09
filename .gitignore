@@ -14,4 +14,7 @@ venv/
 
 # Data and local runtime artifacts
 data/lancedb/
+reports/
 *.log
+build/
+dist/

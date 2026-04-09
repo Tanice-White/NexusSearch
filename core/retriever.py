@@ -58,7 +58,7 @@ except Exception:
             return scores
 
 from core.config import NexusConfig
-from core.schemas import RetrievedChunk
+from core.schemas import RetrievedChunk, RetrievalFilters
 
 if TYPE_CHECKING:
     from core.indexer import NexusIndexer
@@ -135,13 +135,14 @@ class HybridRetriever:
         top_k: int | None = None,
         candidate_k: int | None = None,
         use_rerank: bool | None = None,
+        filters: RetrievalFilters | None = None,
     ) -> list[RetrievedChunk]:
         top_k = top_k or self.config.top_k
         candidate_k = candidate_k or self.config.candidate_k
         use_rerank = self.config.enable_rerank if use_rerank is None else use_rerank
 
-        dense = self._dense_search(query, candidate_k)
-        sparse = self._sparse_search(query, candidate_k)
+        dense = self._dense_search(query, candidate_k, filters)
+        sparse = self._sparse_search(query, candidate_k, filters)
         fused_scores = reciprocal_rank_fusion(
             ranked_lists=[dense, sparse],
             weights=[self.config.dense_weight, self.config.sparse_weight],
@@ -184,18 +185,35 @@ class HybridRetriever:
             merged = self.reranker.rerank(query, merged)[:top_k]
         return merged
 
-    def _dense_search(self, query: str, k: int) -> list[tuple[str, float]]:
-        rows = self.indexer.vector_search(query, k)
+    def _dense_search(
+        self,
+        query: str,
+        k: int,
+        filters: RetrievalFilters | None,
+    ) -> list[tuple[str, float]]:
+        oversample_k = k
+        if filters is not None:
+            oversample_k = max(k * 10, 50)
+        rows = self.indexer.vector_search(query, oversample_k)
         ranked: list[tuple[str, float]] = []
         for row in rows:
+            if not self._matches_filters(row, filters):
+                continue
             doc_id = str(row.get("id", ""))
             distance = float(row.get("_distance", 1.0))
             dense_score = 1.0 / (1.0 + max(distance, 0.0))
             if doc_id:
                 ranked.append((doc_id, dense_score))
+            if len(ranked) >= k:
+                break
         return ranked
 
-    def _sparse_search(self, query: str, k: int) -> list[tuple[str, float]]:
+    def _sparse_search(
+        self,
+        query: str,
+        k: int,
+        filters: RetrievalFilters | None,
+    ) -> list[tuple[str, float]]:
         cache = self._ensure_sparse_cache()
         tokenized_query = tokenize(query)
         if not tokenized_query:
@@ -210,10 +228,15 @@ class HybridRetriever:
 
         ranked: list[tuple[str, float]] = []
         for idx in ranked_indices:
-            doc_id = str(cache.docs[idx].get("id", ""))
+            doc = cache.docs[idx]
+            if not self._matches_filters(doc, filters):
+                continue
+            doc_id = str(doc.get("id", ""))
             score = float(scores[idx])
             if doc_id:
                 ranked.append((doc_id, score))
+            if len(ranked) >= k:
+                break
         return ranked
 
     def _ensure_sparse_cache(self) -> _SparseCache:
@@ -244,3 +267,25 @@ class HybridRetriever:
             except Exception:
                 return {"raw": value}
         return {}
+
+    @staticmethod
+    def _matches_filters(doc: dict[str, Any], filters: RetrievalFilters | None) -> bool:
+        if filters is None:
+            return True
+
+        updated_year = int(doc.get("updated_year", -1))
+        file_type = str(doc.get("file_type", ""))
+        language = str(doc.get("language", ""))
+        source_path = str(doc.get("source_path", ""))
+
+        if filters.year_from is not None and updated_year < filters.year_from:
+            return False
+        if filters.year_to is not None and updated_year > filters.year_to:
+            return False
+        if filters.file_type is not None and file_type != filters.file_type:
+            return False
+        if filters.language is not None and language != filters.language:
+            return False
+        if filters.source_contains is not None and filters.source_contains.lower() not in source_path.lower():
+            return False
+        return True
