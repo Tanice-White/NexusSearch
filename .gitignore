@@ -1,0 +1,17 @@
+# Bytecode and cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Virtual env
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Data and local runtime artifacts
+data/lancedb/
+*.log
